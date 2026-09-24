@@ -7,83 +7,22 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: staging
-        type: choice
-        options:
-          - staging
-          - production
 
 env:
-  DOCKER_REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
   NODE_VERSION: '22'
   PYTHON_VERSION: '3.12'
 
 jobs:
-  lint:
-    name: Lint & Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements/base.txt') }}
-
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff mypy
-
-      - name: Lint backend
-        run: |
-          cd backend
-          ruff check --output-format=github .
-          mypy --ignore-missing-imports .
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Cache npm
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-npm-${{ hashFiles('frontend/package-lock.json') }}
-
-      - name: Install frontend deps
-        run: |
-          cd frontend
-          npm ci
-
-      - name: Lint frontend
-        run: |
-          cd frontend
-          npm run lint
-
-  test:
-    name: Test
-    needs: lint
+  backend-test:
+    name: Backend Tests
     runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: synapse_test
-          POSTGRES_USER: synapse
-          POSTGRES_PASSWORD: synapse123
+          POSTGRES_DB: fams_test_db
+          POSTGRES_USER: fams_user
+          POSTGRES_PASSWORD: fams_password
         ports:
           - 5432:5432
         options: >-
@@ -92,165 +31,58 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements/base.txt') }}
+          cache: 'pip'
+          cache-dependency-path: 'backend/requirements.txt'
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements/base.txt
-          pip install pytest pytest-django pytest-cov pytest-asyncio
-        working-directory: backend
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
 
-      - name: Run tests
+      - name: Verify Python compilation
         run: |
-          pytest --cov=. --cov-report=xml --cov-report=term --ds=config.settings.test
+          python -m compileall backend/
+
+      - name: Run backend test suite
         working-directory: backend
         env:
-          DATABASE_URL: postgres://synapse:synapse123@localhost:5432/synapse_test
-          REDIS_URL: redis://localhost:6379/0
-          SECRET_KEY: test-key-not-for-production
+          DB_ENGINE: django.db.backends.postgresql
+          DB_NAME: fams_test_db
+          DB_USER: fams_user
+          DB_PASSWORD: fams_password
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          SECRET_KEY: ci-test-secret-key-for-fra-attendance
           DEBUG: "False"
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v5
-        with:
-          file: backend/coverage.xml
-          fail_ci_if_error: false
-
-  build-and-push:
-    name: Build & Push Docker Images
-    needs: test
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build & push backend
-        uses: docker/build-push-action@v6
-        with:
-          context: backend
-          file: backend/Dockerfile.prod
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}-api
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: frontend
-          file: frontend/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}-frontend
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push nginx
-        uses: docker/build-push-action@v6
-        with:
-          context: infra/docker/nginx
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}-nginx
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy
-    needs: build-and-push
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        host: [synapse-prod-1]  # Add more hosts for multi-node
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          known_hosts: ${{ secrets.KNOWN_HOSTS }}
-
-      - name: Copy config files
         run: |
-          rsync -avz --delete \
-            -e "ssh -p ${{ secrets.SSH_PORT || 22 }}" \
-            docker-compose.yml \
-            docker-compose.production.yml \
-            infra/docker/nginx/nginx.conf \
-            deploy/scripts/deploy.sh \
-            ${{ secrets.SSH_USER }}@${{ matrix.host }}:/home/synapse/app/
+          pytest -v
 
-      - name: Deploy
-        run: |
-          ssh -p ${{ secrets.SSH_PORT || 22 }} \
-            ${{ secrets.SSH_USER }}@${{ matrix.host }} \
-            "bash /home/synapse/app/deploy.sh"
-        env:
-          DOMAIN: ${{ secrets.DOMAIN }}
-          DOCKER_REGISTRY: ${{ env.DOCKER_REGISTRY }}
-          IMAGE_TAG: ${{ github.sha }}
-
-  notify:
-    name: Notify
-    needs: [deploy]
-    if: always()
+  frontend-build:
+    name: Frontend Build & Typecheck
     runs-on: ubuntu-latest
     steps:
-      - name: Slack notification
-        uses: 8398a7/action-slack@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
         with:
-          status: ${{ job.status }}
-          fields: repo,commit,message,author,took
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        if: always()
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Type check and build production assets
+        working-directory: frontend
+        run: npm run build
