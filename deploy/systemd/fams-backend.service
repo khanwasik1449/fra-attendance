@@ -1,0 +1,20 @@
+[Unit]
+Description=FAMS Django Backend (Gunicorn WSGI)
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=notify
+User=root
+WorkingDirectory=/root/backend
+EnvironmentFile=/root/backend/.env
+ExecStart=/root/backend/venv/bin/gunicorn --config /root/deploy/gunicorn/gunicorn.conf.py config.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=10
+PrivateTmp=true
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

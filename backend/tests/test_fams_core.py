@@ -1,0 +1,541 @@
+import pytest
+from datetime import datetime, date, timedelta, time
+from django.utils import timezone
+from django.urls import reverse
+from rest_framework.test import APIClient
+from rest_framework import status
+
+from apps.accounts.models import User, Department, Project, Employee
+from apps.attendance.models import Attendance, AttendanceSetting
+from apps.requests.models import ManualAttendanceRequest
+from apps.audit.models import AuditLog
+from apps.attendance.services import get_dhaka_datetime, get_dhaka_date
+
+@pytest.mark.django_db
+class TestFAMSCore:
+    def setup_method(self):
+        self.client = APIClient()
+
+        # Setting
+        self.setting = AttendanceSetting.get_active()
+        self.setting.work_start_time = time(9, 0, 0)
+        self.setting.late_grace_minutes = 15
+        self.setting.save()
+
+        # Department
+        self.dept = Department.objects.create(name="Operations", code="OPS")
+
+        # Admin
+        self.admin = User.objects.create_superuser(
+            username="testadmin",
+            password="adminpassword",
+            email="admin@test.com",
+            role=User.Role.ADMIN
+        )
+
+        # Field Assistant
+        self.user_fa = User.objects.create_user(
+            username="testfa",
+            password="fapassword",
+            email="fa@test.com",
+            role=User.Role.FIELD_ASSISTANT
+        )
+        self.employee = Employee.objects.create(
+            user=self.user_fa,
+            employee_id="FA-TEST",
+            full_name="Test Assistant",
+            phone="+8801700000000",
+            department=self.dept,
+            is_active=True
+        )
+
+    def test_login_and_jwt(self):
+        res = self.client.post('/api/v1/auth/login/', {
+            'username': 'testfa',
+            'password': 'fapassword'
+        })
+        assert res.status_code == status.HTTP_200_OK
+        assert 'access' in res.data
+        assert 'refresh' in res.data
+        assert res.data['employee']['employee_id'] == "FA-TEST"
+
+    def test_check_in_success(self):
+        self.client.force_authenticate(user=self.user_fa)
+        res = self.client.post('/api/v1/attendance/check-in/')
+        assert res.status_code == status.HTTP_201_CREATED
+        assert "Check-in successful" in res.data['detail']
+
+        # Verify in DB
+        today = get_dhaka_date()
+        att = Attendance.objects.filter(employee=self.employee, attendance_date=today).first()
+        assert att is not None
+        assert att.attendance_type == Attendance.Type.AUTOMATIC
+        assert att.check_out_time is None
+
+        # Verify audit log
+        log = AuditLog.objects.filter(action='CHECK_IN', object_id=str(att.id)).first()
+        assert log is not None
+        assert log.user == self.user_fa
+
+    def test_duplicate_check_in_prevention(self):
+        self.client.force_authenticate(user=self.user_fa)
+        # First check-in
+        res1 = self.client.post('/api/v1/attendance/check-in/')
+        assert res1.status_code == status.HTTP_201_CREATED
+
+        # Second check-in must fail with 409 Conflict
+        res2 = self.client.post('/api/v1/attendance/check-in/')
+        assert res2.status_code == status.HTTP_409_CONFLICT
+        assert "You have already checked in today" in res2.data['detail']
+
+    def test_check_out_without_check_in_fails(self):
+        self.client.force_authenticate(user=self.user_fa)
+        res = self.client.post('/api/v1/attendance/check-out/')
+        assert res.status_code == status.HTTP_404_NOT_FOUND
+        assert "No active attendance record found" in res.data['detail']
+
+    def test_check_out_success_and_duration_calculation(self):
+        self.client.force_authenticate(user=self.user_fa)
+        self.client.post('/api/v1/attendance/check-in/')
+
+        # Manually backdate check-in time by 2 hours for duration testing
+        today = get_dhaka_date()
+        att = Attendance.objects.get(employee=self.employee, attendance_date=today)
+        att.check_in_time = timezone.now() - timedelta(hours=2)
+        att.save()
+
+        res = self.client.post('/api/v1/attendance/check-out/')
+        assert res.status_code == status.HTTP_200_OK
+        assert "Check-out successful" in res.data['detail']
+
+        att.refresh_from_db()
+        assert att.check_out_time is not None
+        assert att.working_duration_minutes >= 119  # Approx 120 minutes
+
+        # Second check-out must fail
+        res_dup = self.client.post('/api/v1/attendance/check-out/')
+        assert res_dup.status_code == status.HTTP_409_CONFLICT
+        assert "You have already checked out today" in res_dup.data['detail']
+
+    def test_field_assistant_cannot_access_admin_endpoints(self):
+        self.client.force_authenticate(user=self.user_fa)
+        # Try accessing admin attendance
+        res1 = self.client.get('/api/v1/attendance/admin/all/')
+        assert res1.status_code == status.HTTP_403_FORBIDDEN
+
+        # Try accessing admin reports
+        res2 = self.client.get('/api/v1/admin/reports/daily/')
+        assert res2.status_code == status.HTTP_403_FORBIDDEN
+
+        # Try accessing admin audit logs
+        res3 = self.client.get('/api/v1/admin/audit-logs/')
+        assert res3.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_manual_attendance_workflow(self):
+        self.client.force_authenticate(user=self.user_fa)
+        yesterday = get_dhaka_date() - timedelta(days=1)
+        check_in = timezone.now() - timedelta(days=1, hours=8)
+        check_out = timezone.now() - timedelta(days=1)
+
+        # 1. Submit manual request
+        res = self.client.post('/api/v1/manual-requests/', {
+            'attendance_date': str(yesterday),
+            'requested_check_in': check_in.isoformat(),
+            'requested_check_out': check_out.isoformat(),
+            'reason': 'Surveying in remote region without cellular data connectivity.'
+        })
+        assert res.status_code == status.HTTP_201_CREATED
+        req_id = res.data['request']['id']
+
+        # 2. Prevent duplicate pending request
+        res_dup = self.client.post('/api/v1/manual-requests/', {
+            'attendance_date': str(yesterday),
+            'requested_check_in': check_in.isoformat(),
+            'requested_check_out': check_out.isoformat(),
+            'reason': 'Another reason.'
+        })
+        assert res_dup.status_code == status.HTTP_409_CONFLICT
+
+        # 3. Admin approves request
+        self.client.force_authenticate(user=self.admin)
+        res_approve = self.client.post(f'/api/v1/manual-requests/admin/{req_id}/approve/', {
+            'admin_remarks': 'Approved after supervisor confirmation.'
+        })
+        assert res_approve.status_code == status.HTTP_200_OK
+
+        # Verify Attendance record was created with MANUAL type
+        att = Attendance.objects.get(employee=self.employee, attendance_date=yesterday)
+        assert att.attendance_type == Attendance.Type.MANUAL
+        assert att.approved_by == self.admin
+        assert "Approved after supervisor" in att.admin_remarks
+        assert att.manual_request_id == req_id
+
+        # Verify audit log
+        log = AuditLog.objects.filter(action='MANUAL_REQUEST_APPROVED', object_id=str(req_id)).first()
+        assert log is not None
+
+    def test_soft_deactivation(self):
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.post(f'/api/v1/auth/employees/{self.employee.id}/deactivate/')
+        assert res.status_code == status.HTTP_200_OK
+        self.employee.refresh_from_db()
+        assert self.employee.is_active is False
+        assert self.employee.user.is_active is False
+
+        # Attempt to check-in as deactivated employee
+        self.client.force_authenticate(user=self.employee.user)
+        res_ci = self.client.post('/api/v1/attendance/check-in/')
+        assert res_ci.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_reports_and_exports(self):
+        self.client.force_authenticate(user=self.admin)
+
+        # Daily report JSON
+        res_daily = self.client.get('/api/v1/admin/reports/daily/')
+        assert res_daily.status_code == status.HTTP_200_OK
+        assert 'summary' in res_daily.data
+        assert 'records' in res_daily.data
+
+        # Daily report CSV export
+        res_csv = self.client.get('/api/v1/admin/reports/daily/export/?format=csv')
+        assert res_csv.status_code == status.HTTP_200_OK
+        assert res_csv['Content-Type'] == 'text/csv; charset=utf-8'
+
+        # Daily report XLSX export
+        res_xlsx = self.client.get('/api/v1/admin/reports/daily/export/?format=xlsx')
+        assert res_xlsx.status_code == status.HTTP_200_OK
+        assert 'spreadsheetml' in res_xlsx['Content-Type']
+
+        # Monthly report
+        res_monthly = self.client.get('/api/v1/admin/reports/monthly/')
+        assert res_monthly.status_code == status.HTTP_200_OK
+        assert 'records' in res_monthly.data
+
+        # Individual Employee report
+        res_emp = self.client.get(f'/api/v1/admin/reports/employee/{self.employee.employee_id}/')
+        assert res_emp.status_code == status.HTTP_200_OK
+        assert res_emp.data['employee']['employee_id'] == self.employee.employee_id
+
+    def test_gps_checkin_and_geofencing(self):
+        # Create project with coordinates
+        project = Project.objects.create(
+            name="Test Project",
+            code="PRJ-GPS",
+            latitude=23.8103,
+            longitude=90.4125,
+            radius_meters=500
+        )
+        self.employee.project = project
+        self.employee.save()
+
+        self.client.force_authenticate(user=self.user_fa)
+
+        # Check in within boundary (approx 50m away)
+        res = self.client.post('/api/v1/attendance/check-in/', {
+            'latitude': 23.8105,
+            'longitude': 90.4127,
+            'accuracy': 10.5
+        })
+        assert res.status_code == status.HTTP_201_CREATED
+        att = Attendance.objects.get(id=res.data['attendance']['id'])
+        assert att.check_in_latitude is not None
+        assert att.check_in_is_geofence_violation is False
+        assert att.check_in_distance_meters is not None
+        assert att.check_in_distance_meters < 500
+
+    def test_leave_and_holiday_workflow(self):
+        from apps.leaves.models import Holiday, LeaveRequest
+
+        # Field assistant applies for leave
+        self.client.force_authenticate(user=self.user_fa)
+        res = self.client.post('/api/v1/leaves/apply/', {
+            'leave_type': 'SICK',
+            'start_date': '2026-10-01',
+            'end_date': '2026-10-03',
+            'reason': 'Medical recovery after fever'
+        })
+        assert res.status_code == status.HTTP_201_CREATED
+        leave_id = res.data['leave_request']['id']
+        assert res.data['leave_request']['total_days'] == 3
+
+        # Admin reviews and approves
+        self.client.force_authenticate(user=self.admin)
+        res_appr = self.client.post(f'/api/v1/leaves/admin/requests/{leave_id}/approve/', {
+            'admin_remarks': 'Approved, get well soon'
+        })
+        assert res_appr.status_code == status.HTTP_200_OK
+        assert res_appr.data['leave_request']['status'] == 'APPROVED'
+
+        # Verify daily report for leave date reflects ON_LEAVE
+        res_rep = self.client.get('/api/v1/admin/reports/daily/?date=2026-10-02')
+        assert res_rep.status_code == status.HTTP_200_OK
+        record = next((r for r in res_rep.data['records'] if r['employee_id'] == self.employee.employee_id), None)
+        assert record is not None
+        assert record['status'] == 'ON_LEAVE'
+
+    def test_real_location_tracking_at_check_in_and_check_out(self):
+        self.client.force_authenticate(user=self.user_fa)
+
+        # Check in with real GPS
+        res_in = self.client.post('/api/v1/attendance/check-in/', {
+            'latitude': 23.8103,
+            'longitude': 90.4125,
+            'accuracy': 12.5,
+            'address': 'DOHS Baridhara, Dhaka'
+        })
+        assert res_in.status_code == status.HTTP_201_CREATED
+        att_data = res_in.data['attendance']
+        assert float(att_data['check_in_latitude']) == 23.8103
+        assert float(att_data['check_in_longitude']) == 90.4125
+        assert att_data['check_in_address'] == 'DOHS Baridhara, Dhaka'
+
+        # Check out with real GPS
+        res_out = self.client.post('/api/v1/attendance/check-out/', {
+            'latitude': 23.7925,
+            'longitude': 90.4078,
+            'accuracy': 15.0,
+            'address': 'Gulshan-2, Dhaka'
+        })
+        assert res_out.status_code == status.HTTP_200_OK
+        att_out_data = res_out.data['attendance']
+        assert float(att_out_data['check_out_latitude']) == 23.7925
+        assert float(att_out_data['check_out_longitude']) == 90.4078
+        assert att_out_data['check_out_address'] == 'Gulshan-2, Dhaka'
+
+        # Admin views daily report
+        self.client.force_authenticate(user=self.admin)
+        res_rep = self.client.get('/api/v1/admin/reports/daily/')
+        assert res_rep.status_code == status.HTTP_200_OK
+        rec = next(r for r in res_rep.data['records'] if r['employee_id'] == self.employee.employee_id)
+        assert rec['check_in_address'] == 'DOHS Baridhara, Dhaka'
+        assert rec['check_out_address'] == 'Gulshan-2, Dhaka'
+        assert rec['check_in_latitude'] == 23.8103
+        assert rec['check_out_latitude'] == 23.7925
+
+        # Admin exports daily report CSV and checks headers & location content
+        res_csv = self.client.get('/api/v1/admin/reports/daily/export/?format=csv')
+        assert res_csv.status_code == status.HTTP_200_OK
+        content = res_csv.content.decode('utf-8')
+        assert 'Check In Location' in content
+        assert 'Check Out Location' in content
+        assert 'DOHS Baridhara, Dhaka' in content
+        assert 'Gulshan-2, Dhaka' in content
+
+    def test_bangladesh_district_assignment_and_auto_coordinates(self):
+        """
+        Verify that admin can add locations and assign FAs using Bangladesh District/Zilla
+        without entering GPS coordinates, and coordinates are automatically mapped.
+        """
+        # 1. Geo endpoint
+        res_geo = self.client.get('/api/v1/auth/geo/')
+        assert res_geo.status_code == status.HTTP_200_OK
+        assert len(res_geo.data['divisions']) == 8
+        assert 'Dhaka' in res_geo.data['geo']
+        assert 'Gazipur' in res_geo.data['geo']['Dhaka']
+
+        # 2. Admin creates project with district only (no manual coordinates)
+        self.client.force_authenticate(user=self.admin)
+        res_proj = self.client.post('/api/v1/auth/projects/', {
+            'name': 'Gazipur Field Office',
+            'code': 'GZP-SITE-1',
+            'division': 'Dhaka',
+            'district': 'Gazipur',
+            'upazila': 'Tongi',
+            'radius_meters': 1000
+        })
+        assert res_proj.status_code == status.HTTP_201_CREATED
+        assert float(res_proj.data['latitude']) == 24.0023
+        assert float(res_proj.data['longitude']) == 90.4264
+        assert res_proj.data['district'] == 'Gazipur'
+        project_id = res_proj.data['id']
+
+        # 3. Admin creates Field Assistant with district & upazila
+        res_emp = self.client.post('/api/v1/auth/employees/', {
+            'employee_id': 'FA-GZP-01',
+            'full_name': 'Hasan Mahmud',
+            'username': 'hasan_gzp',
+            'password': 'password123',
+            'division': 'Dhaka',
+            'district': 'Gazipur',
+            'upazila': 'Tongi',
+            'project': project_id,
+            'role': 'FIELD_ASSISTANT'
+        })
+        assert res_emp.status_code == status.HTTP_201_CREATED
+        assert res_emp.data['district'] == 'Gazipur'
+        assert res_emp.data['upazila'] == 'Tongi'
+
+        # 4. Check employee list returns district and upazila
+        res_list = self.client.get('/api/v1/auth/employees/?search=FA-GZP-01')
+        assert res_list.status_code == status.HTTP_200_OK
+        emp_record = res_list.data['results'][0]
+        assert emp_record['district'] == 'Gazipur'
+        assert emp_record['upazila'] == 'Tongi'
+
+    def test_district_wise_summary_report(self):
+        """
+        Verify that admin can fetch district-wise total FA summary report,
+        which aggregates field assistants by Bangladesh district coordinates.
+        """
+        # 1. Non-admin forbidden
+        self.client.force_authenticate(user=self.user_fa)
+        res_forbidden = self.client.get('/api/v1/admin/reports/district-summary/')
+        assert res_forbidden.status_code == status.HTTP_403_FORBIDDEN
+
+        # 2. Admin retrieves district summary
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.get('/api/v1/admin/reports/district-summary/')
+        assert res.status_code == status.HTTP_200_OK
+        assert 'total_districts' in res.data
+        assert 'total_active_fas' in res.data
+        assert 'districts' in res.data
+        assert isinstance(res.data['districts'], list)
+
+    def test_admin_reset_employee_password(self):
+        """
+        Verify that admin can reset an employee's password via detail and quick-reset endpoints,
+        and the employee can log in with the new password.
+        """
+        # 1. Detail reset endpoint
+        self.client.force_authenticate(user=self.admin)
+        res_reset = self.client.post(f'/api/v1/auth/employees/{self.employee.id}/reset-password/', {
+            'new_password': 'newpassword123'
+        })
+        assert res_reset.status_code == status.HTTP_200_OK
+        assert 'successfully updated' in res_reset.data['detail']
+
+        # Verify login works with new password
+        client2 = APIClient()
+        res_login = client2.post('/api/v1/auth/login/', {
+            'username': 'testfa',
+            'password': 'newpassword123'
+        })
+        assert res_login.status_code == status.HTTP_200_OK
+
+        # 2. Quick reset endpoint using employee_id
+        res_quick = self.client.post('/api/v1/auth/employees/quick-reset-password/', {
+            'employee_id': self.employee.employee_id,
+            'new_password': 'anotherpassword456'
+        })
+        assert res_quick.status_code == status.HTTP_200_OK
+
+        # Verify login with the quick-reset password
+        res_login2 = client2.post('/api/v1/auth/login/', {
+            'username': 'testfa',
+            'password': 'anotherpassword456'
+        })
+        assert res_login2.status_code == status.HTTP_200_OK
+
+    def test_admin_reset_duty_for_today(self):
+        """
+        Verify that an administrator can reset today's duty for a single FA or all FAs,
+        clearing their attendance record so they can punch in afresh.
+        """
+        # 1. FA checks in
+        self.client.force_authenticate(user=self.user_fa)
+        res_in = self.client.post('/api/v1/attendance/check-in/', {
+            'latitude': 23.8103,
+            'longitude': 90.4125
+        })
+        assert res_in.status_code == status.HTTP_201_CREATED
+
+        # 2. Non-admin forbidden from resetting duty
+        res_forbidden = self.client.post('/api/v1/attendance/admin/reset-duty/', {
+            'employee_id': self.employee.employee_id
+        })
+        assert res_forbidden.status_code == status.HTTP_403_FORBIDDEN
+
+        # 3. Admin resets duty for this specific employee
+        self.client.force_authenticate(user=self.admin)
+        res_reset = self.client.post('/api/v1/attendance/admin/reset-duty/', {
+            'employee_id': self.employee.employee_id
+        })
+        assert res_reset.status_code == status.HTTP_200_OK
+        assert res_reset.data['count'] == 1
+
+        # 4. Verify FA can check in again
+        self.client.force_authenticate(user=self.user_fa)
+        res_in_again = self.client.post('/api/v1/attendance/check-in/', {
+            'latitude': 23.8103,
+            'longitude': 90.4125
+        })
+        assert res_in_again.status_code == status.HTTP_201_CREATED
+
+        # 5. Admin resets duty for ALL employees
+        self.client.force_authenticate(user=self.admin)
+        res_reset_all = self.client.post('/api/v1/attendance/admin/reset-duty/', {
+            'employee_id': 'ALL'
+        })
+        assert res_reset_all.status_code == status.HTTP_200_OK
+        assert res_reset_all.data['count'] >= 1
+
+    def test_project_based_fa_bulk_upload_and_template(self):
+        """
+        Verify that admin can download bulk upload templates and upload project-based
+        Field Assistants via CSV and Excel with project site matching and user creation.
+        """
+        import io
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.accounts.services import EmployeeBulkUploadService
+
+        # 1. Non-admin forbidden
+        self.client.force_authenticate(user=self.user_fa)
+        res_forb = self.client.get('/api/v1/auth/employees/bulk-template/')
+        assert res_forb.status_code == status.HTTP_403_FORBIDDEN
+
+        # 2. Admin retrieves Excel and CSV templates
+        self.client.force_authenticate(user=self.admin)
+        res_xlsx_tpl = self.client.get('/api/v1/auth/employees/bulk-template/')
+        assert res_xlsx_tpl.status_code == status.HTTP_200_OK
+        assert 'spreadsheetml' in res_xlsx_tpl['Content-Type']
+        assert len(res_xlsx_tpl.content) > 1000
+
+        res_csv_tpl = self.client.get('/api/v1/auth/employees/bulk-template/?file_type=csv')
+        assert res_csv_tpl.status_code == status.HTTP_200_OK
+        assert 'text/csv' in res_csv_tpl['Content-Type']
+        assert b'Employee ID' in res_csv_tpl.content
+
+        # 3. Admin bulk uploads FAs via CSV with project assignment
+        from apps.accounts.models import Project, Employee
+        test_project = Project.objects.create(
+            name="Dhaka North Infrastructure",
+            code="PRJ-DHK-NORTH",
+            district="Dhaka",
+            division="Dhaka",
+            upazila="Uttara"
+        )
+
+        csv_content = (
+            "Employee ID,Full Name,Username,Project Code,Phone Number,District,Designation,Password\n"
+            f"FA-BULK-1,Bulk Assistant One,bulkasst1,{test_project.code},01799887766,Dhaka,Field Assistant,secretpass123\n"
+            f"FA-BULK-2,Bulk Assistant Two,bulkasst2,{test_project.code},01899887766,Dhaka,Senior Field Assistant,secretpass123\n"
+        ).encode('utf-8')
+
+        csv_file = SimpleUploadedFile("bulk_fas.csv", csv_content, content_type="text/csv")
+        res_upload = self.client.post('/api/v1/auth/employees/bulk-upload/', {
+            'file': csv_file
+        }, format='multipart')
+
+        assert res_upload.status_code == status.HTTP_200_OK
+        assert res_upload.data['created_count'] == 2
+        assert res_upload.data['failed_count'] == 0
+
+        # Verify created employee profiles in DB
+        e1 = Employee.objects.get(employee_id='FA-BULK-1')
+        assert e1.full_name == 'Bulk Assistant One'
+        assert e1.project == test_project
+        assert e1.user.username == 'bulkasst1'
+
+        # Verify login works for bulk created employee
+        client2 = APIClient()
+        res_login = client2.post('/api/v1/auth/login/', {
+            'username': 'bulkasst1',
+            'password': 'secretpass123'
+        })
+        assert res_login.status_code == status.HTTP_200_OK
+
+
+
+
+
+

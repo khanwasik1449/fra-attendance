@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+backend/venv/
+.pytest_cache/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+media/*
+!media/.gitkeep
+backend/media/*
+!backend/media/.gitkeep
+static/*
+!static/.gitkeep
+backend/staticfiles/*
+!backend/staticfiles/.gitkeep
+
+# Environment
+.env
+.env.local
+.env.production
+backend/.env
+frontend/.env
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.next/
+
+# System & Tooling Artifacts
+.gemini/
+.cache/
+.config/
+.local/
+.npm/
+.opencode/
+.gunicorn/
+.ssh/
+.bash_history
+.bashrc
+.profile
+.gitconfig
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+docker-compose.override.yml

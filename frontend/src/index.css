@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #f8fafc;
+    color: #0f172a;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+.touch-btn {
+  min-height: 48px;
+}
+
+@keyframes ripple-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6), 0 0 0 0 rgba(16, 185, 129, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 16px rgba(16, 185, 129, 0.2), 0 0 0 32px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes ripple-danger {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.6), 0 0 0 0 rgba(244, 63, 94, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 16px rgba(244, 63, 94, 0.2), 0 0 0 32px rgba(244, 63, 94, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0), 0 0 0 0 rgba(244, 63, 94, 0);
+  }
+}
+
+.animate-glow-checkin {
+  animation: ripple-pulse 2.4s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.animate-glow-checkout {
+  animation: ripple-danger 2.4s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.pb-safe {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* ========================================================= */
+/* 🖨️ STRICT CORPORATE HR PRINT & PDF EXPORT STYLESHEET       */
+/* ========================================================= */
+@media print {
+  /* Enforce standard landscape A4 / Letter paper with clean margins */
+  @page {
+    size: landscape;
+    margin: 8mm 8mm 12mm 8mm;
+  }
+
+  /* Force pure white background and sharp contrast text */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 9.5pt !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Completely suppress ANY app navigation, menus, sidebars, buttons, inputs, toolbars */
+  nav,
+  header,
+  footer,
+  aside,
+  button,
+  input,
+  select,
+  textarea,
+  [role="navigation"],
+  .no-print,
+  .print\:hidden,
+  [class*="print:hidden"],
+  [class*="no-print"],
+  .fixed,
+  .sticky {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    overflow: hidden !important;
+  }
+
+  /* Remove all max-width restrictions, shadows, and paddings for pure full-width paper layout */
+  main, .max-w-7xl, .container {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+  }
+
+  /* Strip card shadows, borders, rounded corners */
+  .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xs, .shadow-xs {
+    box-shadow: none !important;
+  }
+
+  /* Ensure tables render with clean official borders and prevent split rows */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 8.5pt !important;
+    page-break-inside: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  td, th {
+    padding: 4px 6px !important;
+    border: 0.5pt solid #94a3b8 !important;
+  }
+
+  /* Prevent signature block and summary blocks from splitting across pages */
+  .break-inside-avoid, .signature-block, .metadata-box {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Hide URL annotations after links on print */
+  a[href]:after {
+    content: none !important;
+  }
+}
