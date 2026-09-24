@@ -113,7 +113,7 @@ export const AdminEmployeeReport: React.FC = () => {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `fams_employee_attendance_dossier_${selectedEmpId}_${startDate}_to_${endDate}.${format}`);
+      link.setAttribute('download', `fra_employee_attendance_dossier_${selectedEmpId}_${startDate}_to_${endDate}.${format}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -275,11 +275,11 @@ export const AdminEmployeeReport: React.FC = () => {
           {/* Formal Corporate Letterhead Header */}
           <div className="border-b-2 border-slate-900 pb-5 text-center space-y-2">
             <div className="flex items-center justify-center gap-2 text-slate-900">
-              <div className="w-7 h-7 rounded-lg bg-slate-900 text-white font-black flex items-center justify-center text-sm print:border print:border-black">
-                F
+              <div className="px-2 h-7 rounded-lg bg-slate-900 text-white font-black flex items-center justify-center text-xs tracking-wider print:border print:border-black">
+                FRA
               </div>
               <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 uppercase">
-                Field Attendance Management System (FAMS)
+                FRA - Field Research Assistants
               </h1>
             </div>
             <div className="text-sm font-black text-slate-800 tracking-wide uppercase">
@@ -294,7 +294,7 @@ export const AdminEmployeeReport: React.FC = () => {
               </div>
               <div>
                 <span className="text-slate-400 font-bold block uppercase text-[10px]">Reference Code:</span>
-                <span className="font-mono font-bold text-slate-800">FAMS-EAD-{report.employee.employee_id}</span>
+                <span className="font-mono font-bold text-slate-800">FRA-EAD-{report.employee.employee_id}</span>
               </div>
               <div>
                 <span className="text-slate-400 font-bold block uppercase text-[10px]">Timezone Standard:</span>
@@ -528,7 +528,7 @@ export const AdminEmployeeReport: React.FC = () => {
 
             {/* Legal Compliance Footnote */}
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center text-[10px] text-slate-500 leading-relaxed print:border print:border-slate-300">
-              <strong>OFFICIAL AUDIT & PAYROLL CERTIFICATION:</strong> This is an authentic system-generated document from FAMS.
+              <strong>OFFICIAL AUDIT & PAYROLL CERTIFICATION:</strong> This is an authentic system-generated document from FRA - Field Research Assistants.
               All timestamps and geolocation entries are recorded under strict server-side authority (Asia/Dhaka timezone).
               Officially compliant for HR payroll processing, statutory labor records, and corporate audit inspection.
             </div>

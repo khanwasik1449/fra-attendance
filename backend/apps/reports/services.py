@@ -660,7 +660,7 @@ class ReportService:
 
         # 1. Organization Letterhead Banner
         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=len(headers))
-        top_cell = ws.cell(row=current_row, column=1, value="FIELD ATTENDANCE MANAGEMENT SYSTEM (FAMS)")
+        top_cell = ws.cell(row=current_row, column=1, value="FRA - FIELD RESEARCH ASSISTANTS")
         top_cell.font = title_font
         top_cell.fill = navy_fill
         top_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -800,7 +800,7 @@ class ReportService:
         disc_cell = ws.cell(
             row=current_row,
             column=1,
-            value="OFFICIAL DOCUMENT NOTICE: This is an authentic system-generated report from FAMS with authoritative server-side timestamps (Asia/Dhaka). Valid for HR payroll calculation, statutory compliance, and corporate audit."
+            value="OFFICIAL DOCUMENT NOTICE: This is an authentic system-generated report from FRA - Field Research Assistants with authoritative server-side timestamps (Asia/Dhaka). Valid for HR payroll calculation, statutory compliance, and corporate audit."
         )
         disc_cell.font = disclaimer_font
         disc_cell.alignment = Alignment(horizontal='center', vertical='center')

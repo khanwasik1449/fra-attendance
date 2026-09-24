@@ -48,15 +48,15 @@ export const Login: React.FC = () => {
     <div className="min-h-screen bg-slate-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-slate-950 font-black text-3xl shadow-lg shadow-emerald-500/20">
-            F
+          <div className="w-16 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-emerald-500/20">
+            FRA
           </div>
         </div>
         <h2 className="mt-4 text-center text-2xl font-black tracking-tight text-white sm:text-3xl">
-          FAMS Attendance Portal
+          FRA - Field Research Assistants Portal
         </h2>
         <p className="mt-2 text-center text-xs text-slate-400">
-          Field Attendance Management System • Official Timezone: Asia/Dhaka (UTC+6)
+          Field Research Assistants • Official Timezone: Asia/Dhaka (UTC+6)
         </p>
       </div>
 

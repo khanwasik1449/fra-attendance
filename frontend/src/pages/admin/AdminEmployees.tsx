@@ -397,7 +397,7 @@ export const AdminEmployees: React.FC<AdminEmployeesProps> = ({ initialTab }) =>
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `fams_fa_bulk_upload_template.${format}`;
+      link.download = `fra_fa_bulk_upload_template.${format}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -445,7 +445,7 @@ export const AdminEmployees: React.FC<AdminEmployeesProps> = ({ initialTab }) =>
     const lines = uploadResult.created_employees.map(
       (e) => `ID: ${e.employee_id} | Name: ${e.full_name} | Username: ${e.username} | Password: ${e.password || 'password123'} | Project: ${e.project_name || e.project_code}`
     );
-    const textToCopy = `FAMS - Newly Provisioned Field Assistants (${uploadResult.created_employees.length}):\n\n` + lines.join('\n');
+    const textToCopy = `FRA - Newly Provisioned Field Research Assistants (${uploadResult.created_employees.length}):\n\n` + lines.join('\n');
     navigator.clipboard.writeText(textToCopy);
     setCopiedCredentials(true);
     setTimeout(() => setCopiedCredentials(false), 2500);

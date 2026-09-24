@@ -108,12 +108,12 @@ export const Navbar: React.FC = () => {
               to={isAdmin ? "/admin" : "/assistant"}
               className="flex items-center gap-2.5 font-bold text-lg tracking-tight hover:text-emerald-400 transition-colors"
             >
-              <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-slate-950 font-black text-xl shadow-sm">
-                F
+              <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-slate-950 font-black text-xs shadow-sm">
+                FRA
               </div>
               <div className="flex flex-col">
-                <span className="leading-tight font-black">FAMS</span>
-                <span className="text-[10px] text-slate-400 font-medium leading-none">Field Attendance</span>
+                <span className="leading-tight font-black">FRA</span>
+                <span className="text-[10px] text-slate-400 font-medium leading-none">Field Research Assistants</span>
               </div>
             </Link>
 

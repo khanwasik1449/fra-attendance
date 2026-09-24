@@ -26,7 +26,7 @@ def get_reverse_geocoded_address(latitude, longitude):
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=16&accept-language=en"
         req = urllib.request.Request(
             url,
-            headers={'User-Agent': 'FAMS-FieldAttendanceSystem/1.0 (admin@fams.local)'}
+            headers={'User-Agent': 'FRA-FieldResearchAssistants/1.0 (admin@fra.local)'}
         )
         with urllib.request.urlopen(req, timeout=2.5) as resp:
             if resp.status == 200:

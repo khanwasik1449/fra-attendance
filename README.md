@@ -1,6 +1,6 @@
-# Field Attendance Management System (FAMS)
+# FRA - Field Research Assistants
 
-An enterprise-grade, mobile-first attendance management and verification platform engineered for field assistants and central administrators.
+An enterprise-grade, mobile-first attendance management and verification platform engineered for Field Research Assistants (FRA) and central administrators.
 
 ---
 
